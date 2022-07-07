@@ -1,12 +1,14 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
 	"net/http"
+
 	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
 	log "github.com/sirupsen/logrus"
-	"os"
-	"encoding/json"
-	"io/ioutil"
+	"github.com/spf13/viper"
 )
 
 type Items struct {
@@ -14,20 +16,46 @@ type Items struct {
 }
 
 type Item struct {
-	Id 	 int 	`json:"Id"`
+	Id   int    `json:"Id"`
 	Name string `json:"Name"`
-	Age  int 	`json:"Age"`
+	Age  int    `json:"Age"`
 	Uri  string `json:Uri`
 }
+
+const (
+	host     = "localhost"
+	port     = 5000
+	user     = "postgres"
+	password = "Guitar938"
+	db_name  = "local_db"
+)
 
 func main() {
 	log.SetReportCaller(true)
 
-    router := gin.Default()
-    
+	viper.SetDefault("PORT", ":8080")
+
+	viper.SetConfigName("")
+	viper.SetConfigType("env")
+	viper.AddConfigPath(".")
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			viper.SetEnvPrefix("")
+			viper.AutomaticEnv()
+		} else {
+			log.Panicf("Fatal error config file: %v \n", err)
+		}
+	}
+
+	if viper.GetString("GIN_MODE") == "release" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	router := gin.Default()
+
 	router.GET("/health", get_health)
 	router.GET("/items", get_items)
-    router.Run(":8080")
+	router.Run(viper.GetString("PORT"))
 }
 
 func get_health(c *gin.Context) {
@@ -35,20 +63,41 @@ func get_health(c *gin.Context) {
 }
 
 func get_items(c *gin.Context) {
-	jsonFile, err := os.Open(os.Getenv("ITEMS_PATH"))
+	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, password, db_name)
+	db, err := sql.Open("postgres", psqlInfo)
 
 	if err != nil {
-		log.Panicf("Fatal error reading items: %v \n", err)
+		panic(err)
+	}
+	defer db.Close()
+
+	err = db.Ping()
+	if err != nil {
+		panic(err)
 	}
 
-	defer jsonFile.Close()
-
-	byteValue, _ := ioutil.ReadAll(jsonFile)
-
-	var items []Item
-
-	if err := json.Unmarshal(byteValue, &items); err != nil {
-		log.Panicf("Fatar error unmarshaling data: %v \n", err)
+	rows, err := db.Query("SELECT item_id, name FROM items LIMIT $1", 10)
+	if err != nil {
+		// handle this error better than this
+		panic(err)
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id int
+		var name string
+		err = rows.Scan(&id, &name)
+		if err != nil {
+			// handle this error
+			panic(err)
+		}
+		items = append(items, fmt.Sprintf("%d: %s", id, name))
+	}
+	// get any error encountered during iteration
+	err = rows.Err()
+	if err != nil {
+		panic(err)
 	}
 
 	c.IndentedJSON(http.StatusOK, items)
