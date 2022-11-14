@@ -55,6 +55,7 @@ func main() {
 
 	router.GET("/health", get_health)
 	router.GET("/items", get_items)
+	router.GET("/item/:id", get_item)
 	router.Run(viper.GetString("PORT"))
 }
 
@@ -101,4 +102,33 @@ func get_items(c *gin.Context) {
 	}
 
 	c.IndentedJSON(http.StatusOK, items)
+}
+
+func get_item(c *gin.Context) {
+	item_id := c.Param("id")
+	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, password, db_name)
+	db, err := sql.Open("postgres", psqlInfo)
+
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	err = db.Ping()
+	if err != nil {
+		panic(err)
+	}
+
+	row := db.QueryRow("SELECT item_id, name FROM items WHERE item_id = $1 LIMIT 1", item_id)
+	var id int
+	var name string
+	switch err := row.Scan(&id, &name); err {
+	case sql.ErrNoRows:
+		c.IndentedJSON(http.StatusNotFound, "Item not found")
+	case nil:
+		c.IndentedJSON(http.StatusOK, name)
+	default:
+		panic(err)
+	}
 }
